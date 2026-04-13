@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-USB Redirector Bot — HTTP API for remote USB device management.
-Drives usbrdrsh.exe (CLI) so no desktop session is required.
+USB Redirector Bot — 通过 HTTP API 远程管理 USB 设备。
+底层调用 usbrdrsh.exe 命令行工具，无需桌面会话即可运行。
 
-Environment variables:
-    USBRDRSH_PATH    — path to usbrdrsh.exe  (default: C:\\Program Files\\USB Redirector\\usbrdrsh.exe)
-    USBRDRSH_TIMEOUT — command timeout in seconds (default: 10)
-    PORT             — HTTP listen port (default: 5000)
+环境变量:
+    USBRDRSH_PATH    — usbrdrsh.exe 的路径 (默认: C:\\Program Files\\USB Redirector\\usbrdrsh.exe)
+    USBRDRSH_TIMEOUT — 命令执行超时秒数 (默认: 10)
+    PORT             — HTTP 监听端口 (默认: 5000)
 """
 
 import logging
@@ -21,16 +21,16 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 
-# ── Configuration ────────────────────────────────────────────────────
+# ── 配置 ─────────────────────────────────────────────────────────────
 USBRDRSH = os.environ.get("USBRDRSH_PATH", r"C:\Program Files\USB Redirector\usbrdrsh.exe")
 CMD_TIMEOUT = int(os.environ.get("USBRDRSH_TIMEOUT", "10"))
 
 
 class USBRedirectorBot:
-    """Wraps usbrdrsh.exe CLI to provide programmatic USB device control."""
+    """封装 usbrdrsh.exe 命令行，提供 USB 设备的共享、连接、断开等操作。"""
 
     def _run_cmd(self, args: list[str]) -> str:
-        """Execute a usbrdrsh.exe command and return combined stdout+stderr."""
+        """执行 usbrdrsh.exe 命令，返回合并后的 stdout + stderr 输出。"""
         try:
             result = subprocess.run(
                 [USBRDRSH, *args],
@@ -45,24 +45,24 @@ class USBRedirectorBot:
         except Exception as e:
             return f"ERROR: {e}"
 
-    # ── Parsing ──────────────────────────────────────────────────────
+    # ── 解析 ─────────────────────────────────────────────────────────
 
     @staticmethod
     def _parse_devices(output: str) -> list[dict]:
         """
-        Parse `-list-devices` output into structured device dicts.
+        解析 `-list-devices` 的输出，返回结构化的设备列表。
 
-        Expected format per device:
-            <id>: <device name>
-              Vid: <vid>  Pid: <pid>
-              Status: <status text>
+        usbrdrsh.exe 输出格式示例:
+            4: Vector - USB Human Interface Device
+              Vid: 06C2  Pid: 0038
+              Status: shared, in use by 192.168.0.100
         """
         devices: list[dict] = []
         current: dict | None = None
 
         for raw_line in output.splitlines():
             line = raw_line.strip()
-            # Device header line, e.g. "4: Vector - USB Human Interface Device"
+            # 匹配设备头行，如 "4: Vector - USB Human Interface Device"
             match = re.match(r"^(\d+):\s+(.+)$", line)
             if match:
                 if current:
@@ -73,14 +73,14 @@ class USBRedirectorBot:
                     "vid": "", "pid": "", "status": "",
                 }
             elif current:
-                # Vendor / Product ID line
+                # 提取 Vendor ID / Product ID
                 vid = re.search(r"Vid:\s*(\w+)", line)
                 pid = re.search(r"Pid:\s*(\w+)", line)
                 if vid:
                     current["vid"] = vid.group(1)
                 if pid:
                     current["pid"] = pid.group(1)
-                # Status line
+                # 提取设备状态
                 status = re.match(r"^Status:\s+(.+)$", line)
                 if status:
                     current["status"] = status.group(1).strip()
@@ -91,18 +91,18 @@ class USBRedirectorBot:
 
     def _find_device(self, keyword: str) -> tuple[dict | None, list[dict]]:
         """
-        Find a device by name keyword (case-insensitive fuzzy match).
-        Returns (last_matched_device, all_devices).
+        根据关键词模糊匹配设备名称（不区分大小写）。
+        返回 (最后一个匹配的设备, 全部设备列表)。
         """
         output = self._run_cmd(["-list-devices"])
         devices = self._parse_devices(output)
         matched = [d for d in devices if keyword.lower() in d["name"].lower()]
         return (matched[-1] if matched else None), devices
 
-    # ── Device operations ────────────────────────────────────────────
+    # ── 设备操作 ─────────────────────────────────────────────────────
 
     def list_devices(self, **_):
-        """List all USB devices with their current status."""
+        """列出所有 USB 设备及其当前状态。"""
         output = self._run_cmd(["-list-devices"])
         devices = self._parse_devices(output)
         if not devices:
@@ -114,7 +114,7 @@ class USBRedirectorBot:
         }
 
     def share_device(self, device_name: str | None = None, **_):
-        """Share a USB device so remote clients can connect to it."""
+        """共享 USB 设备，使远程客户端可以连接。"""
         if not device_name:
             return {"status": "error", "message": "device is required"}
         device, _ = self._find_device(device_name)
@@ -122,7 +122,7 @@ class USBRedirectorBot:
             return {"status": "error", "message": f"Device not found: {device_name}"}
 
         st = device["status"]
-        # Already shared or in use — no action needed
+        # 已共享或正在使用中，无需重复操作
         if "shared" in st or "in use by" in st:
             return {"status": "info", "message": f"{device['name']} (ID:{device['id']}) already shared. Status: {st}"}
 
@@ -132,7 +132,7 @@ class USBRedirectorBot:
         return {"status": "error", "message": f"Share failed: {out.strip()}"}
 
     def unshare_device(self, device_name: str | None = None, **_):
-        """Stop sharing a USB device. Fails if a client is still connected."""
+        """取消共享 USB 设备。如果客户端仍在使用则拒绝操作。"""
         if not device_name:
             return {"status": "error", "message": "device is required"}
         device, _ = self._find_device(device_name)
@@ -140,7 +140,7 @@ class USBRedirectorBot:
             return {"status": "error", "message": f"Device not found: {device_name}"}
 
         st = device["status"]
-        # Cannot unshare while a client holds the device
+        # 客户端正在使用，必须先断开才能取消共享
         if "in use by" in st:
             return {"status": "error", "message": f"{device['name']} (ID:{device['id']}) is in use — disconnect first. Status: {st}"}
         if "shared" not in st:
@@ -152,7 +152,7 @@ class USBRedirectorBot:
         return {"status": "error", "message": f"Unshare failed: {out.strip()}"}
 
     def connect_device(self, device_name: str | None = None, **_):
-        """Make a device available for client connection (auto-shares if needed)."""
+        """连接设备（如果未共享则自动先执行共享）。"""
         if not device_name:
             return {"status": "error", "message": "device is required"}
         device, _ = self._find_device(device_name)
@@ -165,14 +165,14 @@ class USBRedirectorBot:
         if "shared" in st:
             return {"status": "info", "message": f"{device['name']} (ID:{device['id']}) already shared, awaiting client. Status: {st}"}
 
-        # Device not shared yet — share it so clients can connect
+        # 设备尚未共享，先执行共享以便客户端连接
         out = self._run_cmd(["-share", str(device["id"])])
         if "OPERATION SUCCESSFUL" in out:
             return {"status": "success", "message": f"Shared: {device['name']} (ID:{device['id']}), awaiting client"}
         return {"status": "error", "message": f"Share failed: {out.strip()}"}
 
     def disconnect_device(self, device_name: str | None = None, **_):
-        """Force-disconnect a device from its current client."""
+        """强制断开设备与当前客户端的连接。"""
         if not device_name:
             return {"status": "error", "message": "device is required"}
         device, _ = self._find_device(device_name)
@@ -186,11 +186,11 @@ class USBRedirectorBot:
         return {"status": "error", "message": f"Disconnect failed: {out.strip()}, status: {st}"}
 
 
-# ── Application setup ────────────────────────────────────────────────
+# ── 应用初始化 ────────────────────────────────────────────────────────
 
 bot = USBRedirectorBot()
 
-# Command name → handler mapping for dispatch
+# 命令名 → 处理函数的映射表，用于统一分发
 COMMANDS = {
     "list":       bot.list_devices,
     "share":      bot.share_device,
@@ -203,8 +203,8 @@ COMMANDS = {
 @app.route("/command", methods=["POST"])
 def handle_command():
     """
-    Unified command endpoint.
-    Expects JSON: {"command": "<name>", "device": "<keyword>"}
+    统一命令入口。
+    请求格式: {"command": "<命令名>", "device": "<设备名关键词>"}
     """
     data = request.get_json(silent=True)
     if not data:
@@ -225,7 +225,7 @@ def handle_command():
 
 @app.route("/health", methods=["GET"])
 def health():
-    """Simple liveness probe."""
+    """健康检查接口。"""
     return jsonify({"status": "running"})
 
 
