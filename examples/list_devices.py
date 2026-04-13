@@ -8,7 +8,7 @@ import time
 
 try:
     desktop = Desktop(backend="uia")
-    window = desktop.window(title="USB Redirector - Evaluation version")
+    window = desktop.window(title="USB Redirector") # 试用版有后缀 - Evaluation version
     window.set_focus()
     print("找到 USB Redirector 窗口\n")
 
